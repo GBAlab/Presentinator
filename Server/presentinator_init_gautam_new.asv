@@ -1,0 +1,52 @@
+c 195	% bgcolor
+b 300	% bullseye size
+d COM3 115200 8 2 1000 % serial port open (USB to drive FW1)
+%d COM1 115200 8 1 1000 % serial port open 
+d COM4 115200 8 2 1000 % serial port open (USB to drive FW2)%GA
+
+o 0 0	% offset x y
+f 1	% framerate factor (slow-down)
+w 75 75	% wait pre post frames
+p 3.0	% um2pixel
+m 0
+
+u 446	% UDP port
+%l 888	% parallel port
+l 60416
+l 0 0 1 0 	% Parallel port signals
+z 1	% zoom (magnify bmps)
+t 0 0 1	% triggered start off
+
++ 9 888 15	Test parallel port: 1111
+
+%+ 1 COM1 mm	Epi shutter open (in stim: [-1 dur 4 userId=1]% rm % GA
+%+ 2 COM1 zz	Epi shutter close                             % rm % GA
+%+ 1 COM1 open s	Epi shutter open      %changed COM3 to COM1 GA
+%+ 2 COM1 close s	Epi shutter close %changed COM3 to COM1 GA
+
+%+ 11 COM3 pos=1	FW1 IR+ND20 
+%+ 12 COM3 pos=2	FW1 ND30    
+%+ 13 COM3 pos=3	FW1 ND20    
+%+ 14 COM3 pos=4	FW1 Black   
+%+ 15 COM3 pos=5	FW1 515/39  
+%+ 16 COM3 pos=6	FW1 UV_411SP
+
++ 11 COM3 pos=1	FW1 IR+ND20 
++ 12 COM3 pos=2	FW1 ND30    
++ 13 COM3 pos=3	FW1 ND20    
++ 14 COM3 pos=4	FW1 ND40   
++ 15 COM3 pos=5	FW1 Black
++ 16 COM3 pos=6	FW1 Empty
+
++ 21 COM4 pos=1	FW2 ND20 
++ 22 COM4 pos=2	FW2 ND30    
++ 23 COM4 pos=3	FW2 ND40    
++ 24 COM4 pos=4	FW2 ND50   
++ 25 COM4 pos=5	FW2 ND0  
++ 26 COM4 pos=6	FW2 ND10
+
+
+%+ 31 COM1 i1	Epi  12% % rm % & changed COM3 to COM1 GA
+%+ 32 COM1 i2	Epi  25% %rm % & changed COM3 to COM1 GA
+%+ 33 COM1 i3	Epi  50% %rm % & changed COM3 to COM1 GA
+%+ 34 COM1 i4	Epi 100% %rm % & changed COM3 to COM1 GA

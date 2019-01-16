@@ -1,0 +1,21 @@
+%%%%%%%%%%%%%%%%%%%%%%%% General %%%%%%%%%
+c 195	% bgcolor
+b 400	% bullseye size
+o 0 0	% offset x y
+f 1	% framerate factor (slow-down)
+w 75 75	3 % wait pre post frames
+v 2	% verbose 
+m 0	% no mask
+z 1 0	% zoom (magnify bmps)
+
+u 446	% UDP port
+l EC00	% parallel port
+
+t 0 4 60000	% triggered start off 1min timeout
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%% Userspec %%%%%
+< presentinator_init_gautam.txt
+
+> presentinator.log

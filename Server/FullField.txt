@@ -1,0 +1,16 @@
+% script file
+
+l 0 0 2 3 0
+% + 51 LPT1 2 % startrec
+% + 50 LPT1 3 % stoprec
+
+w 150 225 % wait 2sec before and 3sec after flashes
+  
+s flash\n \n-1 75 2 0\n-1 75 0 0
+
+s
+s
+s
+s
+
++ 0 LPT1 1 % new file

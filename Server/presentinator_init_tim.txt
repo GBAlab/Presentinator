@@ -1,0 +1,17 @@
+d COM1 9600 8 2 1 % serial port open
+w 75 75	% wait pre post frames
+p 3.75	% um2pixel
+
+l 0 2 1 0 0	% Parallel port signals
+t 0 1 60000	% triggered start off 1min timeout
+
+%+ 1 COM1 OPEN S 4	Epi shutter open
+%+ 2 COM1 CLOSE S 4	Epi shutter close
+
++ 11 COM1 pos=1	FW1 
++ 12 COM1 pos=2	FW1 
++ 13 COM1 pos=3	FW1 
++ 14 COM1 pos=4	FW1 
++ 15 COM1 pos=5	FW1 
++ 16 COM1 pos=6	FW1 
+

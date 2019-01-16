@@ -1,0 +1,19 @@
+c 195	% bgcolor
+d COM1 9600 8 2 1 % serial port open
+o 0 0	% offset x y
+f 0	% framerate factor 
+w 1 0 8	% wait pre post frames
+p 2.3	% um2pixel
+v 2
+k 620   % polychrome color
+
+z 1	% zoom (magnify bmps)
+
+l 0 2 0 4 0 %  pins: [ready, stim, vsync, action, trigger]
+
++ 1 COM1 OPEN S 	Epi shutter open
++ 2 COM1 CLOSE S	Epi shutter close
+
++ 9 LPT1 1	new file
++ 8 LPT1 0	stoprec 
++ 7 LPT1 2	startrec 

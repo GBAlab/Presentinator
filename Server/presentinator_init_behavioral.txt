@@ -1,0 +1,52 @@
+b 300	% bullseye size
+b
+
+d UTA6 57600 8 1 1000 % Red array
+
+d UTA7 57600 8 1 1000 % Blue array
+
+d COM4 9600 8 1 1000 % Poly shutter
+
+p 3.0	% um2pixel
+
+k 400
+
+l 0 2 0 4 0 % [pin: ready, stim, vsync, action, trigger]
+t 0 4 60000	% triggered start off 1min timeout
+
++ 7 COM4 ens	Change Monochromator shutter
++ 8 TILL 470	Monochromator to ChR2
++ 9 TILL 580	Monochromator to NpHR
+
+% to test
++ 4 UTA6 8.5	full red 
++ 5 UTA6 6.78	max 2red
++ 6 UTA6 0.0	off
+
++ 1 UTA7 8.5	blue 8.5V  
++ 2 UTA7 0.5	blue off  
+
+% LED array
++ 100 UTA6 0.5	OFF 
++ 146 UTA6 5.2	red 4.6log
++ 156 UTA6 5.95	red 5.6log 
++ 160 UTA6 7.0	red 6.0log 
++ 162 UTA6 7.9	red 6.2log 
++ 165 UTA6 8.5	red 6.5log 
+
++ 200 UTA6 0.0	OFF 
++ 246 UTA6 7.5	blue 4.6log
++ 256 UTA6 8.5	blue 5.6log
++ 260 UTA6 10.1	blue 6.0log
++ 262 UTA6 11.1	blue 6.2log
++ 265 UTA6 12.9	blue 6.5log
+
+% pupillary
++ 300 UTA7 0.0	OFF
++ 301 UTA7 2.3	white -1loglux
++ 302 UTA7 2.37	white  0loglux
++ 303 UTA7 2.44	white  1loglux
++ 304 UTA7 2.53	white  2loglux
++ 305 UTA7 2.73	white  3loglux
++ 306 UTA7 3.88	white  4loglux
+

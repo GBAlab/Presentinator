@@ -1,0 +1,47 @@
+%This version is compatible with Presentinator 8.2 (client)
+
+b 300	% bullseye size
+
+d COM3 115200 8 1 1000 % FilterWheel USB to serial port open %get numbers from documentation (baud, data bits, stop bits, timeout)
+%d COM1 9600 8 1 1000 % Epi serial port open 
+d COM4 115200 8 2 1000 % serial port open (USB to drive FW2)%GA
+
+p 3	% um2pixel  (this overides all other specifications in the presentinator client :ephys)
+
+
+l 0 1 0 2 0 % [pin: ready, stim, vsync, action, trigger] 
+
+%parallel port signals, 0 dont use
+% has 8 data bits.  u, D0, D1.....These DO NOT correspond to the phsical labels on the cable, but a are shifted
+%by one. Therefore 2nd pin is 1  etc. Can only be 1 to 8.
+%Reset parallel port address from 888 to EC00 in 1) Presentinator.m 2) Presentinator_rush.m 3)Presentinator_init
+
+%ready is high when the program is ready and low when not
+%stim high when display and low when waiting
+
+
+t 0 3 60000	% triggered start off 1min timeout (this is the incoming trigger that is not used currently.)
+
+
+%+ 1 COM1 mm	Epi shutter open
+%+ 2 COM1 zz	Epi shutter close
+
+
++ 11 COM3 pos=1	FW1 IR+ND20 
++ 12 COM3 pos=2	FW1 ND30    
++ 13 COM3 pos=3	FW1 ND20    
++ 14 COM3 pos=4	FW1 ND40   
++ 15 COM3 pos=5	FW1 Black
++ 16 COM3 pos=6	FW1 empty
+
++ 21 COM4 pos=1	FW2 ND20 
++ 22 COM4 pos=2	FW2 ND30    
++ 23 COM4 pos=3	FW2 ND40    
++ 24 COM4 pos=4	FW2 ND50   
++ 25 COM4 pos=5	FW2 ND0  
++ 26 COM4 pos=6	FW2 ND10
+
+%+ 31 COM3 i1	Epi  12% 
+%+ 32 COM3 i2	Epi  25% 
+%+ 33 COM3 i3	Epi  50% 
+%+ 34 COM3 i4	Epi 100%

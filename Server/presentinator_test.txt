@@ -1,0 +1,137 @@
+> testlog.log
+
+v 2 % verbosity level
+v	% cycle
+v
+v
+v 1 % else wait if error
+
+b 100 % set size
+b % switch off
+b % switch back
+b 0
+
+c 192	% bgcolor
+c     	% cycle
+c
+c 
+c 190 0 % bg, textcolor
+c 1 2 3 4  % error
+c 200 10 0 % color
+c 195.2
+
+z 1.2	% zoom
+z 2.1 2.2
+z		% cycle
+z
+z
+z -2	% error
+z 
+
+w 0 0	% wait frames
+w
+w -1	% error
+
+f 1.1	% frame rate
+f		% cycle
+f
+f
+f -2	% error
+f 
+
+p
+p 2.9		% um2pixel
+p -1	% error
+
+%o		% set by mouse
+o -1 -1
+o 1		% error
+o 0.0 0.0
+
+m 100	% mask size
+m
+m
+m 200
+m -1	% no mask
+
+l 		% write back settings
+l 888	% port
+l 5 4 3 2 1 % levels
+l 1 2	% error
+
+t 		% write back settings
+t 888	% port
+t 0 1 1000		% timeout
+t 0 1 			% error
+
+u 446
+u 		% reset port
+
+d COM1 9600 8 2 1000 	% serial port open
+d COM3 9600 8 2   	% serial port2 open
+d >open s		% old format 
+d		  	% close both
+d
+d COM1	9600 % error
+d COM1	% error
+d 23	% error
+
++ 1 COM1 open s 	Epi shutter open
++ 2 COM1 close s 
++ 0 888 0 	doit now
++ 3 888 15	Parallel port 111
++ 4 LPT1 0	Parallel port 0 
++ 5 LPT2 0	Parallel port 0 
++ 7 888
+
+1	%test user
+4	%test user
+6	%error no such user
+9	%error no such user
+-2	%error no such user
+1.3
+
+<  \rb	%invoke command
+
+% test stimulus file extra commands
+
+s testfile
+
+w 75 0
+s test background for 3sec \n -1 150 0 0
+w 150 0
+s test background for 4sec \n -1 150 0 0
+w 75 150
+s test background for 5sec \n -1 150 0 0
+w 150 0
+
+s test wait      \n -1 150 1 0
+
+s test bgcolor   \n -1 300 2 10
+
+m 300
+s masked bgcolor \n \n -1 300 2 10
+
+s test flip      \n \n -1 300 3 100
+s test flip      \n \n -1 0 3 10\n -1 300 2 10
+
++ 1 LPT1 0
+s test user 1  \n \n -1 150 4 1\n-1 150 4 1
+s test syncron \n \n -1 0 4 1\n-1 150 2 10
+s test zero    \n \n -1 0 3 0
+
+s test error user -1  \n \n -1 75 4 -1
+s test error user 0   \n \n -1 75 4 0
+s test error bmp  100 \n \n 100 75 0 0
+
+i
+
+q	%unknown 
+
+%e
+
+% test triggered start
+% test parallel port signaling
+% test serial commands
+
+i

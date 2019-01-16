@@ -1,0 +1,25 @@
+d COM1 9600 8 2 1000 % serial port open
+d COM5 9600 8 2 1000 % poly sc10 serial port open
+
+w 0 0 5
+
+p 3.0	% um2pixel
+
+l 0 1 0 3 0 % [pin: ready, stim, vsync, action, trigger]
+
++ 1 COM1 OPEN S 4	Epi shutter open
++ 2 COM1 CLOSE S 4	Epi shutter close
++ 3 COM1 OPEN S 2	FW shutter open
++ 4 COM1 CLOSE S 2	FW shutter close
+
++ 11 COM1 ROTAT S M 1	FW1 IR
++ 21 COM1 ROTAT S M 2	FW1 none
++ 16 COM1 ROTAT S M 6	FW1 E440sp
+
++ 13 COM1 ROTAT S A 1	FW2 ND2
++ 22 COM1 ROTAT S A 2	FW2 ND4
++ 12 COM1 ROTAT S A 3	FW2 ND3
++ 24 COM1 ROTAT S A 4	FW2 ND0
++ 14 COM1 ROTAT S A 6	FW2 Black
+
++ 7 COM5 ens	poly

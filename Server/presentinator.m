@@ -1,0 +1,1147 @@
+
+%IDEAS:
+% mask array, activeMaskID, 'm shape id params'
+% stim file change origin and masktype
+
+%function presentinator()
+try 
+
+%% init 
+
+
+command = '< presentinator_init.txt'; % at first load settings
+cmd_sender = 'init';
+lastcommand = ''; % used in logging
+
+maxUtaAmper = 3;
+
+% Add default arguments
+lport=446;      % integer UDP port
+bgcolor = 195;  % single or triple value
+
+frameRateFactor = 1; % used to scale duration value
+Zoomimage = [1 0];
+um2pixel = 4.45; % double
+offset = [0 0]; % in pixel
+verbose = 2;    
+% verbose: 0 -silent:  info screen only with keyboard 
+%          1 -minimal: draw if move origin, UDP port reset, trigger wait
+%          2 -full:    draw received cmd on screen, draw stim stat
+%          3 -debug:   show flip square, if error wait to press button
+
+bullseyeSize = 300; % in micron
+waitFrames = [1 0 3];
+polyMask = [];
+
+% portnumber pins: [ready, stim, vsync, action, trigger]
+parallel_codes = [hex2dec('EC00') 8 7 6 5 4];
+parallel_states = logical(zeros(1,8));
+
+triggeredStart = [hex2dec('EC00') 0 4 10000]; % active pin timeoutMS
+logFilename = '';
+%serialTimeout = 2;
+logFid = -1;
+
+clut = 0:1:255;
+
+% clut = floor(clut/10)*10;
+
+% Till polychrome interface
+try
+    loadlibrary('TILLPolychrome.dll');
+    polychrome.exist = 1;
+catch
+    polychrome.exist = 0;
+end
+polychrome.color = 470;
+polychrome.open = false; % true during stimulus presentation
+polychrome.pTill = libpointer('voidPtrPtr');
+
+% internal parameters
+txtcolor = 10; % normal text
+infocolor = 10; % info low-contrast text 
+info_state = 0;
+bullseyeOn = 0;
+mousemoveOn = 0;
+mousemove_bullseye = 1; % 1-bullseye, 2.. images
+pathstr_old = [];
+scrOff = [];
+protocol = [];
+last_s_command = '';
+last_protocol_command = '';
+protocolCommands = [];
+user_commands = {}; % 1 -ownid 2 -port 3 -command 4 -comment 5 -type 6 -object
+ip = '';
+port = 0;
+longestProcessing = 0; % if it is over 100% timing error!
+bgcolorindex = 195; % bgcolor in clut index provided by user
+
+
+[status, Myipaddr] = system('ipconfig');
+Myipaddr = regexpi(Myipaddr,'IP[\w\.\s\-]+:([\.\d \t]+)[\n\r\v]','tokens');
+if isempty(Myipaddr)
+    Myipaddr = '(no network!)';
+    udp = -1;
+else
+    Myipaddr = ['or udp to: ' Myipaddr{1}{1}];
+    % Open udpsocket and bind udp port address to it
+    udp=pnet('udpsocket',lport);
+    pnet(udp,'setreadtimeout',0); % = noblock
+end
+
+% load and clean-up rush code (remove comments and close lines)
+rushloop = textread('presentinator_rush.m','%[^\n]');
+for i=1:size(rushloop,1)
+    rushloop{i} = [sscanf(rushloop{i},'%[^%]') ';']; %delete % comments
+end
+
+% init screen 
+presentinator_scrinit;
+        
+cmd_sender = 'Initialization ';
+
+disp(['START at ' datestr(now)]);
+HideCursor();
+
+commandfraction = false;
+
+%% listen-up for commands
+udp_loop_run = 1;
+while udp_loop_run
+    if parallel_codes(2) && parallel_states(parallel_codes(2)) == 0; 
+        parallel_states(parallel_codes(2)) = 1; % ready
+        parallel_out(parallel_codes(1),bin2dec(num2str(parallel_states)));
+    end
+
+    if isempty(command) || commandfraction % else exec command
+        if udp == -1
+            len = 0;
+        else
+            len=pnet(udp,'readpacket');
+        end
+            
+        if len > 0
+            if len > 45000
+                commandfraction = true;
+            else
+                commandfraction = false;
+            end
+            % Read udp packet to read buffer
+            command=[command pnet(udp,'read')];
+            [ip,port]=pnet(udp,'gethost');
+            ip = [num2str(ip(1)) '.' num2str(ip(2)) '.' num2str(ip(3)) '.' num2str(ip(4))];
+            cmd_sender = [ip ':' num2str(port) ' ' ]; 
+        elseif (CharAvail)
+            chr = GetChar;
+            command = chr;
+            port = 0;
+            cmd_sender = 'Keyboard ';
+        end
+        if mousemoveOn && isempty(command)
+            [MouseX,MouseY,MouseB] = GetMouse();
+            rgb = [MouseX-screenRect(3)/2 screenRect(4)/2-MouseY];
+            if any(offset ~= rgb) % position changed
+                command = ' ';
+                offset = rgb;
+            end
+            if any(MouseB)  % 1=bullseye 2...images
+                mousemove_bullseye = mod(mousemove_bullseye + 1, sum(scrOff ~= 0)+1)+1;
+                MouseB = '';
+                while any(MouseB) % wait for release
+                    [MouseX,MouseY,MouseB] = GetMouse();
+                end
+                GetMouse(); % wait to release
+            end
+        end
+    end
+    
+    if ~isempty(command) && ~commandfraction 
+      if parallel_codes(2)
+            parallel_states(parallel_codes(2)) = 0; % not ready = busy
+            parallel_out(parallel_codes(1),bin2dec(num2str(parallel_states)));
+      end
+      if (command(1) ~= ' ')
+          lastcommand = sprintf('%s\n  %% %s from %s\n', strrep(command,sprintf('\n'),'\n'), datestr(now), cmd_sender); 
+      end
+
+      if (logFid == -1 && verbose > 2) %debug
+          disp([datestr(now) ' ' cmd_sender ' "' command '"']);
+      end
+  
+      if upper(command(1)) ~= 'I'
+            info_state = 0;
+      end
+        
+      switch upper(command(1))
+      case ' ' % clear screen, draw bullseye 
+        if length(protocolCommands) ~= 0 % continue command sequence 
+          command = protocolCommands{1};
+          cmd_sender = 'Command file ';
+          protocolCommands(1) = []; %special syntax to delete cell 
+          if isempty(command)
+              command = ' ';
+          end
+
+          if isempty(protocolCommands)
+             if port % if port == 0 it was keyboard event
+                  pnet(udp,'write', ['LAST @ %s ' datestr(now)]);     
+                  pnet(udp,'writepacket',ip,port);   % Send buffer as UDP packet
+             end
+          end
+          continue;
+        end
+        Screen('CopyWindow',scrBg,scrOffline); % clear screen
+        if bullseyeOn
+            delta = bullseyeSize/um2pixel/2;
+            destRect = [screenRect(3)/2-delta+offset(1) screenRect(4)/2-delta-offset(2) screenRect(3)/2+delta+offset(1) screenRect(4)/2+delta-offset(2)];
+            if mousemove_bullseye < 2 || ~mousemoveOn
+                if ~isempty(polyMask)
+                    Screen(scrOffline,'FillRect',txtcolor);
+                    Screen(scrOffline,'FillPoly',bgcolor,polyMask);
+                else
+                    Screen('CopyWindow',scrBullseye,scrOffline,screenRect,destRect);
+                end
+            else
+                rgb = find(scrOff ~= 0); % find mousemove_bullseye-th image 
+                rgb = rgb(mousemove_bullseye - 1);
+                % copied from presentinator_rush.m:
+                srcRect = [max(screenRect(1)-offset(1),0)                       max(screenRect(2)+offset(2),0)                        min(screenRect(3)-offset(1),screenRect(3))                        min(screenRect(4)+offset(2),screenRect(4))];
+                destRect = [max(screenRect(1)+offset(1),0)                        max(screenRect(2)-offset(2),0)                        min(screenRect(3)+offset(1),screenRect(3))                       min(screenRect(4)-offset(2),screenRect(4))];
+                Screen('CopyWindow',scrOff(rgb),scrOffline,srcRect,destRect); 
+            end          
+        end
+        if mousemoveOn
+            if bullseyeOn; rgb = 'OFF';
+            else rgb = 'ON';
+            end 
+            if (verbose > 0)
+                Screen(scrOffline,'DrawText',['Current offset ' num2str(fix(offset*um2pixel)) ...
+                    'um Move mouse to change, press b to turn image ' rgb ', click to bmp, press o to fix.'], 25, 35, txtcolor);        
+            end
+        end
+        Screen(w,'WaitBlanking');
+        Screen('CopyWindow',scrOffline,w);
+
+        command = ''; % finished
+      case 24  % Ctrl-X
+          udp_loop_run = 0; 
+      case 25  % Ctrl-Y
+          udp_loop_run = 0; 
+      case 'I' % Info screen
+        Screen('CopyWindow',scrBg,w); % clear screen
+        if length(protocolCommands)
+           command = ' ';
+        else
+           command = '';
+        end
+                
+        if port % if port == 0 it was keyboard event
+            txt = ['Framerate= ' num2str(1/frametime) ' umPerPixel= ' num2str(um2pixel)];
+            pnet(udp,'write',txt);     
+            pnet(udp,'writepacket',ip,port);   % Send buffer as UDP packet
+            if (logFid ~= -1) 
+                lastcommand = sprintf('  %% %s %s\n', datestr(now), txt); 
+            end
+            if (verbose == 0)
+                txt = 'i % framerate sent';
+                presentinator_log;
+                continue;
+            end
+        end
+
+        if info_state == 0  || port %write commands
+            info_state = 1; 
+            offy = 50;
+            Screen(w,'DrawText',['Valid commands from keyboard ' Myipaddr], 25, 20, txtcolor);
+            Screen(w,'DrawText',[' i Info loaded bmps  ' num2str(sum(scrOff ~= 0)) ' (press to peek)' ...
+                        '   [Framerate= ' num2str(1/frametime) 'Hz' ...
+                        ' with ' num2str(screenRect(3)) 'x' num2str(screenRect(4)) 'pixels'...
+                        ', last stim usage: ' num2str(longestProcessing) '%]'], 25, offy, txtcolor); offy=offy+15;
+            Screen(w,'DrawText',[' c background Color  ' num2str(bgcolorindex) ...
+                     ' [bg: ' num2str(bgcolor) ', text: ' num2str(txtcolor) ', info: ' num2str(infocolor) ']'], 25, offy, txtcolor);offy=offy+15;
+            if polychrome.exist 
+                if polychrome.open
+                    rgb = [num2str(polychrome.color) 'nm'];
+                else
+                    rgb = 'closed';
+                end
+                Screen(w,'DrawText',[' k till polychrome   ' rgb] , 25, offy, txtcolor);offy=offy+15;
+            end
+            Screen(w,'DrawText',[' w Wait times        ' num2str(waitFrames) ' frames [pre post user]'], 25, offy, txtcolor);offy=offy+15;
+            Screen(w,'DrawText',[' f Frame rate factor ' num2str(frameRateFactor)], 25, offy, txtcolor);offy=offy+15;
+            Screen(w,'DrawText',[' p microns/Pixel     ' num2str(um2pixel) ], 25, offy, txtcolor);offy=offy+15;
+            Screen(w,'DrawText',[' z Zoom/rotate image ' ...
+                    num2str(Zoomimage(1)) 'x ' num2str(Zoomimage(2)) '`'], 25, offy, txtcolor);offy=offy+15;            
+            if mousemoveOn
+                rgb = 'lock';
+            else
+                rgb = 'move';
+            end
+            Screen(w,'DrawText',[' o position Offset   ' num2str(fix(offset*um2pixel)) ' microns (press to ' rgb ')'], 25, offy, txtcolor);offy=offy+15;
+            if bullseyeOn
+                rgb = 'hide';
+            else
+                rgb = 'show';
+            end
+            Screen(w,'DrawText',[' b Bullseye size     ' num2str(bullseyeSize) ' microns (press to ' rgb ')'], 25, offy, txtcolor);offy=offy+15;
+            if isempty(polyMask)
+                rgb = 'circe';
+            elseif length(polyMask) > 70
+                rgb = 'rectange';
+            else
+                rgb = 'remove';
+            end
+            Screen(w,'DrawText',[' m Mask overlay      ' num2str(size(polyMask,1)) ' (press to ' rgb ')'], 25, offy, txtcolor);offy=offy+15;
+            rgb = ' (press to set high)';
+            Screen(w,'DrawText',[' l paraLlel signals  ' num2str(parallel_codes(1)) ...
+                                 ' pin [ready, stim, startstop, action, trigger] ' num2str(mod(9-parallel_codes(2:end),9)) rgb], 25, offy, txtcolor);offy=offy+15;
+            if triggeredStart(2)
+                rgb = 'Off';
+            else
+                rgb = 'On';
+            end
+            Screen(w,'DrawText',[' t start on Trigger  ' num2str(triggeredStart(1)) ...
+                                 ' [active pin timeoutMS] ' num2str(triggeredStart(2:end)) ...
+                                 ' (press to ' rgb ')'], 25, offy, txtcolor);offy=offy+15;
+            rgb = instrfind;
+            switch length(rgb)
+            case 0
+                rgb = 'none';
+            case 1
+                rgb = rgb.Name;
+            otherwise
+                rgb = rgb.Name;
+                rgb = [rgb{:}];
+            end
+            Screen(w,'DrawText',[' d serial Data ports ' rgb ' (press to close)'], 25, offy, txtcolor);offy=offy+15;
+            Screen(w,'DrawText',[' u UDP network port  ' num2str(lport) ], 25, offy, txtcolor);offy=offy+15;
+            switch (verbose)
+                case 0, rgb = 'Silent';
+                case 1, rgb = 'Minimal';
+                case 2, rgb = 'Full';
+                case 3, rgb = 'Debug';
+                otherwise, rgb = 'Debug !';
+            end
+            Screen(w,'DrawText',[' v Verbosity level   ' rgb], 25, offy, txtcolor);offy=offy+15;
+            if isempty(logFilename)
+                rgb = '';
+            else
+                rgb = ' (press to flush)';
+            end
+            Screen(w,'DrawText',[' > logfile           ' logFilename rgb], 25, offy, txtcolor);offy=offy+15;
+            if isempty(last_protocol_command)
+                rgb = '';
+            else
+                rgb = ' (press to reload)';
+            end
+            Screen(w,'DrawText',[' < load commands     ' last_protocol_command rgb], 25, offy, txtcolor);offy=offy+15;
+            if isempty(pathstr_old)
+                rgb = '';
+            else
+                rgb = ' (press to replay)';
+            end
+            Screen(w,'DrawText',[' s Stim last path    ' pathstr_old rgb], 25, offy, txtcolor);offy=offy+15;
+%            Screen(w,'DrawText', ' e Eval expression   ', 25, 305, txtcolor);
+            Screen(w,'DrawText', '   exit              Ctrl-X ', 25, offy, txtcolor);offy=offy+15;
+
+            Screen(w,'DrawText', [' + user commands    X=' ...    
+                '0 bg, 1 wait, 2 bgcolor, 4 user, 5 polychrome '], 25, offy, txtcolor);offy=offy+15;
+
+            % draw clut
+            Screen(w,'DrawText',[' r brightness Range  0-' num2str(length(clut)-1)], 25, offy, txtcolor);offy=offy+15;
+            offx = 50; 
+            Screen(w,'DrawRect', infocolor, [offx offy offx+length(clut)+1 offy+257]);
+            for idx=1:length(clut)-1
+                Screen(w,'DrawLine', txtcolor, offx+idx, offy+256-clut(idx) , offx+idx+1, offy+256-clut(idx+1));
+            end
+            % list user commands
+            offy = offy-15;
+            for i=1:size(user_commands,2)
+                cmd = user_commands{i};
+                if ~isempty(cmd)
+                    Screen(w,'DrawText',[cmd{1} ' ' cmd{4} ' (' cmd{2} ' >' cmd{3} ')'], 400, offy, txtcolor);
+                    offy=offy+15;
+                end
+            end
+            
+            txt = 'i % list commands/values'; % for logging
+        else   %plot bmps
+            info_state = 0;
+            Screen(scrOffline,'FillRect',txtcolor,screenRect);
+            % Screen('CopyWindow',scrBg,scrOffline); 
+            gridsize = ceil(sqrt(sum(scrOff ~= 0)+1));
+            if ~isempty(polyMask)
+                Screen(scrOffline,'FillPoly',bgcolor,polyMask/gridsize); 
+                Screen(scrOffline,'DrawText','Mask', 5, 10, txtcolor);            
+            else
+                Screen('CopyWindow',scrBullseye,scrOffline,screenRect, floor(screenRect / gridsize));
+            end
+            
+            imgid = 1;
+            for i=1:size(scrOff,2)
+                if scrOff(i)
+                    destRect(1:2) = [mod(imgid,gridsize)*screenRect(3) floor(imgid/gridsize)*screenRect(4)];
+                    destRect(3:4) = [(1+mod(imgid,gridsize))*screenRect(3) (floor(imgid/gridsize)+1)*screenRect(4)];
+                    destRect = floor(destRect / gridsize);
+                    destRect(3:4) = destRect(3:4)-1;
+                    Screen('CopyWindow',scrOff(i),scrOffline,screenRect,destRect);
+                    Screen(scrOffline,'DrawText',num2str(i), destRect(1)+5, destRect(2)+10, txtcolor);            
+                    imgid = imgid + 1;
+                end
+            end
+            
+            Screen('CopyWindow',scrOffline,w);
+            txt = 'i % plot bmps'; % for logging
+        end
+        presentinator_log;
+    
+      case 'B' % bullseye
+        rgb = sscanf(command(2:end),'%d',1);
+        if isempty(rgb)
+            bullseyeOn = 1 - bullseyeOn; % toggle bullseye-view
+        elseif rgb > 0 % show
+            bullseyeSize = rgb;
+            bullseyeOn = 1;
+        else
+            bullseyeOn = 0;
+        end
+        command = ' ';
+        txt = ['b ' num2str(bullseyeOn* bullseyeSize)];
+        presentinator_log;
+      
+      case 'R'  
+        rgb = sscanf(command(2:end),'%d',3);
+        if isempty(rgb)
+            % nothing 
+        else
+            clut = rgb';
+            % make sure it is 0-255
+            clut = round(clut);
+            clut(clut < 0) = 0;
+            clut(clut > 255) = 255;
+            scrOff = []; % clear loaded bmps
+        end
+        command = ' ';       
+        txt = ['n ' num2str(clut)];
+        presentinator_log;
+        
+      case 'C' % bgcolor
+        rgb = sscanf(command(2:end),'%d',3);
+        if isempty(rgb)
+            if bgcolorindex == 0
+                rgb = round(length(clut)/2);
+            elseif bgcolorindex == round(length(clut)/2)
+                rgb = length(clut)-1;
+            else
+                rgb = 0;
+            end
+        end
+        if length(rgb) == 3 && rgb(1) == rgb(2) && rgb(2) == rgb(3)
+            rgb = rgb(1);
+        end
+        switch length(rgb)
+        case 1
+            bgcolorindex = round(rgb);
+            bgcolor = clut(max(min(bgcolorindex+1,length(clut)),1));
+            if bgcolorindex < length(clut)/2
+                txtcolor = clut(end); 
+            else
+                txtcolor = clut(1); 
+            end
+            if verbose > 2 % debug
+                infocolor = txtcolor;
+            else
+                if bgcolor < 160
+                    infocolor = bgcolor+40; 
+                else
+                    infocolor = bgcolor-70; 
+                end
+            end
+            txt = ['c ' num2str(bgcolor) ' ' num2str(txtcolor)];
+        case 2
+            bgcolorindex = round(rgb);
+            bgcolor = clut(max(min(bgcolorindex+1,length(clut)),1));
+            txtcolor = rgb(2);
+            txt = ['c ' num2str(bgcolor) ' ' num2str(txtcolor)];
+        case 3
+            bgcolor = rgb';
+            bgcolorindex = -1;
+            if mean(bgcolor) < 100
+                txtcolor = 255; 
+            else
+                txtcolor = 0; 
+            end
+            txt = ['c ' num2str(bgcolor)];
+        otherwise
+            txt = ['Unknown color settings ' num2str(rgb')...
+                ' use [bg] [bg text]'];
+            presentinator_error; continue;                              
+        end    
+        scrOff = [];
+        mousemove_bullseye = 1;
+        Screen(scrBg,'FillRect',bgcolor,screenRect);
+        command = ' ';       
+        presentinator_log;
+
+      case 'K' % polychrome
+        if ~polychrome.exist % if no Till Polychrome no such command
+            cmd_sender = 'Helper ';
+            command = 'I';
+            continue;
+        end
+        rgb = sscanf(command(2:end),'%f',1);
+        if isempty(rgb) % set to color
+            rgb = polychrome.color;
+        end
+
+        if ~polychrome.open 
+            [errCode polychrome.pTill] = calllib('TILLPolychrome','TILLPolychrome_Open',polychrome.pTill,0);
+            if errCode % cannot open
+                 polychrome.open = false;
+                 txt = ['TILLPolychrome_Open errorcode: ' num2str(errCode)];
+                 presentinator_error;
+            else
+                 polychrome.open = true;
+            end
+        end
+%        if polychrome.open 
+            errCode = calllib('TILLPolychrome','TILLPolychrome_SetRestingWavelength',polychrome.pTill,rgb);
+            if errCode
+                % [v txt] = calllib('TILLPolychrome','TILLPolychrome_GetStatusText',polychrome.pTill,errCode,'',100);
+                txt = ['TILLPolychrome_SetRW errorcode: ' num2str(errCode)];
+                presentinator_error;
+            else
+                polychrome.open = true;
+                polychrome.color = rgb;
+                txt = ['k ' num2str(polychrome.color)];
+                presentinator_log;
+            end
+ %       end
+        command = ' ';       
+
+      case 'Z' % Zoomimage
+        rgb = sscanf(command(2:end),'%f',2);
+        if isempty(rgb)
+            switch Zoomimage(1)
+                case 1;    Zoomimage(1) = 2;
+                case 2;    Zoomimage(1) = 0.5;
+                otherwise; Zoomimage(1) = 1;
+            end
+        elseif rgb(1) > 0
+            if length(rgb) == 1
+                Zoomimage(1) = rgb;
+            else
+                Zoomimage = rgb';
+            end
+        else
+            txt = ['Zoom out:(0,1) in:(1,inf) not:' num2str(rgb)];
+            presentinator_error; continue;              
+        end
+        scrOff = []; % reset images
+        mousemove_bullseye = 1;
+        command = ' '; % delete command buffer
+        txt = ['z ' num2str(Zoomimage)];
+        presentinator_log;
+        
+      case 'W' % waitFrames
+        rgb = sscanf(command(2:end),'%d');
+        switch length(rgb)
+        case 0
+           waitFrames = waitFrames+1;
+        case 1
+            for waitsync=1:rgb   % give some time to the sender
+                 Screen(w,'WaitBlanking');
+            end
+        otherwise
+            if any(rgb < 0)
+                txt = ['waitFrames must be non-negative, not ' num2str(rgb')];
+                presentinator_error; continue;              
+            else
+                waitFrames(1:length(rgb)) = rgb;
+            end
+        end
+        command = ' '; 
+        if length(rgb) == 1
+            txt = ['w ' num2str(rgb)];
+        else
+            txt = ['w ' num2str(waitFrames)];
+        end
+        presentinator_log;
+
+      case 'F' % rateFactor
+        rgb = sscanf(command(2:end),'%f',1);
+        if isempty(rgb)
+            switch frameRateFactor
+            case 1;    frameRateFactor = 2;
+            case 2;    frameRateFactor = 0.5;
+            case 0.5;  frameRateFactor = 1;
+            end                   
+        elseif rgb > 0
+            frameRateFactor = rgb;
+        elseif rgb == 0
+            frameRateFactor = 1/frametime/1000; % 1000/x ms = 1 frame
+        else
+            txt = ['FrameRateFactor faster:(0,1) slower:(1,inf) not:' num2str(rgb)];
+            presentinator_error; continue;
+        end
+        command = ' '; % delete command buffer
+        txt = ['f ' num2str(frameRateFactor)];
+        presentinator_log;
+       
+      case 'P' % um2pixel
+        rgb = sscanf(command(2:end),'%f',1);
+        if isempty(rgb)
+            um2pixel = 1;
+        elseif rgb > 0
+            um2pixel = rgb;
+        else
+            txt = ['um2pixel must be positive, not:' num2str(rgb)];
+            presentinator_error; continue;              
+        end
+        command = ' '; 
+        txt = ['p ' num2str(um2pixel)];
+        presentinator_log;
+
+      case 'O' % offset
+        rgb = sscanf(command(2:end),'%f',2)';
+        if isempty(rgb)
+            if any(offset) && ~mousemoveOn
+                offset = [0 0];
+                mousemoveOn  = false;
+            elseif (port == 0) % keyboard
+                mousemoveOn  = ~mousemoveOn; %invert mousemoveOn
+            end
+        else
+            if length(rgb) == 2
+                offset = fix(rgb/um2pixel);
+            else
+                txt = ['Both offset must be presented [x y], not:' num2str(rgb)];
+                presentinator_error; continue;
+            end
+        end
+        command = ' '; 
+        txt = ['o ' num2str(fix(offset*um2pixel))];
+        presentinator_log;
+       
+      case 'V' % verbose
+        rgb = sscanf(command(2:end),'%d',1);
+        if isempty(rgb)
+            verbose = mod(verbose+1,4);
+        else
+            verbose = rgb;
+        end
+        command = ' '; % delete command buffer
+        txt = ['v ' num2str(verbose)];
+        presentinator_log;
+
+      case 'M' % mask
+        rgb = sscanf(command(2:end),'%d');
+        if isempty(rgb)
+            if isempty(polyMask)
+                rgb = bullseyeSize;
+            elseif length(polyMask) > 70
+                rgb = -bullseyeSize;
+            else
+                rgb = 0; % off
+            end
+        end
+
+        if length(rgb) == 1
+            % compute mask poligon
+            radius = rgb/um2pixel/2;
+            polyMask = [];
+            if rgb > 1 
+                for t=-pi:pi/36:pi
+                    polyMask = [polyMask; floor(screenRect(3)/2+offset(1)+radius*cos(t)), ...
+                                      floor(screenRect(4)/2-offset(2)+radius*sin(t)) ];
+                end
+            elseif rgb < -1
+                polyMask = [floor(screenRect(3)/2+offset(1)-radius), floor(screenRect(4)/2-offset(2)+radius); ...
+                    floor(screenRect(3)/2+offset(1)-radius), floor(screenRect(4)/2-offset(2)-radius); ...
+                    floor(screenRect(3)/2+offset(1)+radius), floor(screenRect(4)/2-offset(2)-radius); ...
+                    floor(screenRect(3)/2+offset(1)+radius), floor(screenRect(4)/2-offset(2)+radius); ...
+                    floor(screenRect(3)/2+offset(1)-radius), floor(screenRect(4)/2-offset(2)+radius); ...
+                    ];
+            else
+                rgb = 0;
+            end
+            if ~isempty(polyMask)
+              polyMask = [0,0; 0,screenRect(4); screenRect(3),screenRect(4); screenRect(3),0; 0,0; polyMask];
+            end
+
+        else %!! do better
+            polyMask = rgb;
+            polyMask = reshape(polyMask,2,size(polyMask)/2);
+        end
+        command = ' '; % delete command buffer
+        txt = ['m ' num2str(rgb)];
+        presentinator_log;
+        
+      case 'L' % parallel port 
+        rgb = sscanf(command(2:end),'%d');
+        disp(num2str(parallel_codes(1)));
+        switch length(rgb)
+        case 0
+            parallel_out(parallel_codes(1),255);
+            for waitsync=1:waitFrames(3)   % give some time to the sender
+                 Screen(w,'WaitBlanking');
+            end
+            parallel_out(parallel_codes(1),bin2dec(num2str(parallel_states)));
+        case 1
+            parallel_codes(1) = rgb;
+        case 5
+            parallel_codes(2:6) = mod(9-rgb,9);
+        case 6
+            parallel_codes(1) = rgb(1);
+            parallel_codes(2:6) = mod(9-rgb(2:6),9);
+        otherwise
+            txt = ['Unknown parallel settings ' num2str(rgb')...
+                ' use [port] or [pin: ready, stim, startstop, action, trigger]'];
+            presentinator_error; continue;              
+        end
+        command = ' '; % delete command buffer
+        txt = ['l ' num2str([parallel_codes(1) mod(9-parallel_codes(2:6),9)])];
+        presentinator_log;
+
+      case 'T' % trigger to start
+        rgb = sscanf(command(2:end),'%f');
+        switch length(rgb)
+            case 0
+                if triggeredStart(2)
+                    triggeredStart(2) = 0;
+                else
+                    triggeredStart(2) = 1;
+                end
+            case 1
+                triggeredStart(1) = rgb(1);
+            case 3
+                triggeredStart(2:4) = rgb;
+            case 4
+                triggeredStart(1:4) = rgb;
+            otherwise
+            txt = ['Unknown trigger settings ' num2str(rgb')...
+                ' use [port] or [mask val timeout]'];
+            presentinator_error; continue;              
+        end
+        command = ' '; % delete command buffer
+        txt = ['t ' num2str(triggeredStart)];
+        presentinator_log;        
+        
+      case 'U' % udp port reset
+        rgb = sscanf(command(2:end),'%d');
+        if ~isempty(rgb)
+            lport = rgb;
+        end
+        if (verbose)
+          Screen('CopyWindow',scrBg,w); % clear screen
+          txt = ['Reset UDP port to ' num2str(lport)];
+          Screen(w,'DrawText', txt, 200, 20, txtcolor);
+        end
+        pnet(udp,'close');
+        for waitt=1:30
+            Screen(w,'WaitBlanking');
+        end       
+        udp=pnet('udpsocket',lport);
+        pnet(udp,'setreadtimeout',0);
+        command = ' '; % delete command buffer
+        txt = ['u ' num2str(lport)];
+        presentinator_log;        
+        
+      case 'D' % serial port handle 
+        if length(command) < 4
+            rgb = instrfind;
+            if ~isempty(rgb)
+                fclose(rgb);
+                if (logFid ~= -1) 
+                    for i=1:size(rgb,2)
+                        txt = ['%% closed ' rgb(1,i).Port]; 
+                        presentinator_log;
+                    end
+                end
+                delete(txt);
+            end
+            command = ' '; % delete command buffer
+            txt = 'd';
+            presentinator_log;        
+        else
+            if command(3) == '>' % old style
+                command = ['+ 0 COM1 ' command(4:end)];
+                cmd_sender = 'Compatibility ';
+                continue;
+            elseif command(3) == '3'
+                command = ['+ 0 COM3 ' command(4:end)];
+                cmd_sender = 'Compatibility ';
+                continue;
+            end
+
+            rgb = regexpi(command,'d\s+(\w+)\s+(.*)','tokens');
+            command = ' ';
+            
+            s_port = rgb{1}{1};
+            uta = false;
+            if strncmpi(s_port,'UTA',3)
+                s_port(1:3) = 'COM';
+                uta = true;
+            end
+            
+            if length(rgb) ~= 1 || length(rgb{1}) ~= 2 || s_port(1) ~= 'C'
+                txt = 'Unknown command, use: [d COM baud data stop timeout]';
+                presentinator_error; continue;
+            end
+           
+            rgb = sscanf(rgb{1}{2},'%d');
+            if length(rgb) < 3 || length(rgb) > 4
+                txt = 'Unknown parameters, use: [d COM baud data stop timeout]';
+                presentinator_error; continue;                
+            end
+                
+            so = instrfind('Port',s_port);
+            if ~isempty(so)
+                 fclose(so);
+                 delete(so);
+            end
+            so = serial(s_port); 
+
+            so.Baudrate = rgb(1);      % Set the baud rate at the specific value
+            if ~uta
+                set(so, 'Parity', 'none') ;     % Set parity as none
+                set(so, 'Databits', rgb(2)) ;        % set the number of data bits
+                set(so, 'StopBits', rgb(3)) ;        % set number of stop bits 
+                set(so, 'Terminator', 'CR') ;   % set the terminator value to newline
+                stopasync(so);
+            end
+            if (length(rgb) > 3)
+                 set(so, 'Timeout', rgb(4)) ;
+            else
+                 set(so, 'Timeout', 0.5*frametime);  
+            end
+            
+            try fopen(so); 
+            catch
+                [txt, rgb] = lasterr;
+                presentinator_error; continue;
+            end;
+            
+            if uta % set-up device
+                buffer(1:24) = uint8(0);
+
+                so.UserData(3)=0;
+                buffer(4)= hex2dec('FF'); % getidn
+                resp = writeUTA(so, buffer);
+                so.UserData(3)=resp(5);
+
+                buffer(4)= hex2dec('5F'); % setstatus
+                buffer(5)= 64; %remote 2^6
+                writeUTA(so, buffer);
+                buffer(5)= 0; 
+
+                % todo get 16v20A using command hex2dec('8F');
+                buffer(4)= hex2dec('48'); % getmax
+                resp = writeUTA(so, buffer);
+                so.UserData(1) = (resp(5)*2^8+resp(6))/16; % V out
+                so.UserData(2) = (resp(7)*2^8+resp(8))/20; % I out
+                
+                buffer(4)= hex2dec('3F'); % setcurrent
+                value = round(maxUtaAmper*so.UserData(2)); %convert
+                buffer(5)= floor(value/256);
+                buffer(6)= mod(value,256);
+                writeUTA(so, buffer);
+            end
+            
+            if (logFid ~= -1) 
+                lastcommand = sprintf('  %% %s %s is %s\n', datestr(now), so.Port, so.status); 
+            end
+            if so.status(1) ~= 'c' %closed
+                txt = ['d ' s_port ' ' num2str(rgb')];
+                presentinator_log;        
+            end
+
+        end
+        
+      case 'E' % eval (e.g. call other .mat file)
+        if length(command(3:end) > 1)
+            Screen('CloseAll');
+
+            rgb = instrfind;
+            if ~isempty(rgb)
+                fclose(rgb);
+                if (logFid ~= -1) 
+                    for i=1:size(rgb,2)
+                        txt = sprintf('  %% %s is closed\n', rgb(1,i).Port); 
+                        presentinator_log;
+                    end
+                end
+            end
+
+            try
+            [val resp] = eval(sscanf(command(3:end),'%c'));
+            catch
+                val = 0;
+                [txt, rgb] = lasterr;
+                presentinator_error;
+                resp = {txt};
+            end
+
+            presentinator_scrinit;
+        
+            if port % if port == 0 it was keyboard event
+               val = sprintf('Filenum=%d;Framerate=%0.2f;Response=''%s'';', ...
+                                val, 1/1/frametime, resp{1});
+               pnet(udp,'write', val);
+               pnet(udp,'writepacket',ip,port); 
+                if (logFid ~= -1) 
+                    txt = val;
+                    presentinator_log;
+                end
+            end
+            if ~isempty(rgb)
+                fopen(rgb);
+                if (logFid ~= -1) 
+                    for i=1:size(rgb,2)
+                        txt = sprintf('  %% %s is opened again\n', rgb(1,i).Port); 
+                        presentinator_log;
+                    end
+                end
+            end
+      
+            Screen('CopyWindow',scrBg,w); % clear screen
+        else
+            txt = ['Empty e command received ' command];
+            presentinator_error; continue;
+        end
+        txt = ['e ' command(3:end)];
+        presentinator_log;
+        command = ' '; % delete command buffer
+
+      case '>' % log file if keyboard flush out
+        if logFid ~= -1
+           fclose(logFid);
+        end
+        if ~isempty(command(3:end))
+            logFilename = command(3:end);
+        end
+        
+        [logFid, txt] = fopen(logFilename,'at');
+        if logFid == -1
+            presentinator_error; continue;
+        else
+            fprintf(logFid, '%%%%%% %s Start log Presentinator_mat [D. Balya @ Roska Lab, FMI 2007-08]\n',datestr(now));
+        end
+        command = ' '; % delete command buffer
+        txt = ['> ' logFilename];
+        presentinator_log;
+  
+      case '<' % command sequence file or command!
+        command = strrep(command,'\r',sprintf('\n'));
+
+        if isempty(command(3:end))
+            protocolFileName = last_protocol_command;
+        else
+            protocolFileName = command(3:end);
+        end
+        last_protocol_command = protocolFileName;
+        
+        command = ' '; % delete command buffer
+        if isempty(protocolFileName)
+            continue;
+        end
+        oldprotocolCommands = protocolCommands;
+
+        rgb = find(protocolFileName == sprintf('\n'),1);
+        if isempty(rgb)
+            if 0 == exist(protocolFileName,'file')
+                txt = ['Missing file ' protocolFileName];
+                presentinator_error; continue;
+            end
+            protocolCommands = textread(protocolFileName,'%[^\n]');
+        else
+            % chop to cell array
+            protocolCommands = regexp(protocolFileName(rgb+1:end),'[^\n]*','match');
+        end
+        
+        for i=1:size(protocolCommands,1)
+            protocolCommands{i} = sscanf(protocolCommands{i},'%[^%]');
+        end
+        if ~isempty(oldprotocolCommands)
+            for j=1:size(oldprotocolCommands,1)
+                protocolCommands{i+j} = oldprotocolCommands{j};
+            end
+        end
+        
+        command = ' '; % ' ' evals protocol list
+        txt = '< \r';
+        for i=1:size(protocolCommands,1)
+            txt = [txt protocolCommands{i} '\r'];
+        end
+        presentinator_log;
+        
+      case '+' % define new stimulus number
+        if ~isempty(command(3:end))      % id         com      command \t comment
+            rgb = regexp(command(3:end),'([+-]*\d+)\s+(\w+)\s+([^\t]+)\t*(.*)','tokens');
+            command = ' ';
+            if isempty(rgb)
+                txt = 'Unknown parameters, use: [+ id COM/LPT command \t comment]';
+                presentinator_error; continue;
+            end
+            
+            cmd = rgb{1};
+            if strcmpi(cmd{2},'LPT1')
+                cmd{2} = num2str(hex2dec('EC00'));
+            elseif strcmpi(cmd{2},'LPT2')
+                cmd{2} = num2str(hex2dec('278'));
+            end
+            
+            so = str2double(cmd{2});
+            if isfinite(so) % if port is a number = parallel port
+               cmd{5} = 'p';
+               cmd{6} = so; % port
+               cmd{7} = str2double(cmd{3});
+            else
+               cmd{5} = 's';
+               cmd{6} = str2double(cmd{2}(4)); % set in presentinator_s
+               cmd{7} = cmd{3};
+            end
+            if strcmpi(cmd{2},'TILL')
+               cmd{5} = 't';
+               cmd{6} = str2double(cmd{3}); %??
+               cmd{7} = str2double(cmd{3});  % nm
+            end                
+            if strncmpi(cmd{2},'UTA',3)
+               cmd{5} = 'u';
+               cmd{6} = ['COM' cmd{2}(4:end)]; %port
+               cmd{7} = str2double(cmd{3});    % V
+            end
+               
+            rgb = str2double(cmd{1}); % id
+            if rgb > 0 % store
+                user_commands{rgb} = cmd;
+            elseif rgb == 0 && ~isempty(cmd) % execute
+                switch cmd{5}
+                case 'p'
+                   parallel_out(cmd{6}, cmd{7});
+                case 's'
+                   so = instrfind('Port',cmd{2});
+                   so = so(1); %last occurence
+                   if isempty(so) 
+                        txt = ['Invalid serial port ' cmd{2}];
+                        presentinator_error; continue;
+                   end
+                   if so.status(1) == 'c' %closed
+                        txt = ['Serial port ' cmd{2} ' is closed'];
+                        presentinator_error; continue;
+                   end
+                   if so.BytesAvailable
+                        fread(so, so.BytesAvailable, 'char');
+                   end
+                   fprintf(so, cmd{7}); % syncron write
+                case 'u'
+                   so = instrfind('Port',cmd{6});
+                   so = so(1); %last occurence
+                   if isempty(so) 
+                        txt = ['Invalid uta port ' cmd{2}];
+                        presentinator_error; continue;
+                   end
+                   if so.status(1) == 'c' %closed
+                        txt = ['Serial port ' cmd{2} ' is closed'];
+                        presentinator_error; continue;
+                   end
+                   if so.BytesAvailable
+                        fread(so, so.BytesAvailable);
+                   end
+                   
+                   buffer(1:24) = uint8(0);
+                   buffer(4)= hex2dec('1F'); % setvoltage
+                   value = round(cmd{7}*so.UserData(1));
+                   buffer(5)= floor(value/256);
+                   buffer(6)= mod(value,256);
+                   writeUTA(so, buffer);
+                case 't'
+                    calllib('TILLPolychrome','TILLPolychrome_SetRestingWavelength',polychrome.pTill,cmd{7});
+                end
+
+                for waitsync=1:waitFrames(3)   % give some time to the sender
+                    Screen(w,'WaitBlanking');
+                end
+            else
+                txt = ['Invalid user command ' ...
+                                        cmd{1} ' ' cmd{4} ' (' cmd{2} ' >' cmd{3} ')'];
+                presentinator_error; continue;
+            end
+            txt = ['+ ' cmd{1} ' ' cmd{2} ' ' cmd{3} sprintf('\t') cmd{4}];
+            presentinator_log;
+        end
+        command = ' '; % delete command buffer
+    
+      case 'S' % stimulus: [action frames posX um posY um]
+          presentinator_s
+
+      case '%' % comment
+        command = ' '; % delete command buffer
+        
+      otherwise % user command
+        rgb = floor(real(str2double(command)));
+        if isreal(rgb) && rgb > 0 && ...
+                length(user_commands) >= rgb && ...
+                ~isempty(user_commands{rgb})
+            cmd = user_commands{rgb};        
+            command = ['+ 0 ' cmd{2} ' ' cmd{3}];
+            cmd_sender = 'Translation ';
+        else
+            txt = ['Unknown command ' command];
+            presentinator_error;
+            cmd_sender = 'Helper ';
+            command = 'I';
+        end
+      end % end commands switch
+      if (verbose > 1)
+            Screen(w,'FillRect',bgcolor, [0, screenRect(4), screenRect(3), screenRect(4)-15]);
+            if ~isempty(lastCommandScreen)
+                Screen(w,'DrawText',lastCommandScreen, 25, screenRect(4), infocolor);
+            end
+      end
+
+    end
+
+end % end udp_loop_run
+
+disp(['EXIT at ' datestr(now)]);
+
+% the end
+catch
+     disp(['CRASHED at ' datestr(now)]);
+     rgb = lasterror;
+     txt = [rgb.message ' Server terminates.']; 
+     presentinator_error;
+     disp(txt);
+end
+
+try
+    ShowCursor();
+    Screen('CloseAll');
+catch
+end
+
+if parallel_codes(1)
+    parallel_states = logical(zeros(1,8)); % set all pins low
+    parallel_out(parallel_codes(1),bin2dec(num2str(parallel_states)));
+end
+
+if polychrome.open 
+    calllib('TILLPolychrome','TILLPolychrome_Close',polychrome.pTill);
+end 
+
+so = instrfind();
+if ~isempty(so)
+    fclose(so);
+    delete(so);
+end
+
+if logFid ~= -1
+   fclose(logFid);
+end
+
+if port % send to last user that we terminated
+    pnet(udp,'write', ['EXIT @ %s ' datestr(now)]);     
+    pnet(udp,'writepacket',ip,port);   % Send buffer as UDP packet
+end
+pnet(udp,'close')

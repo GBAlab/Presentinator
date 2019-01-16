@@ -1,0 +1,42 @@
+b 300	% bullseye size
+
+d COM1 9600 8 2 1000 % FW  serial port open
+d COM3 9600 8 1 1000 % Epi serial port open
+%d COM6 9600 8 1 1000 % PrjEpi serial port open or TILL
+d COM7 9600 8 1 1000 % Epi serial port open
+
+p 3.0	% um2pixel
+
+k 400
+
+l 0 2 0 4 0 % [pin: ready, stim, vsync, action, trigger]
+t 0 4 60000	% triggered start off 1min timeout
+
+
++ 1 COM3 mm	Epi shutter open
++ 2 COM3 zz	Epi shutter close
+
++ 5 COM6 mm	Prj Epi shutter open
++ 6 COM6 zz	Prj Epi shutter close
+
++ 7 COM7 ens	Change Monochromator shutter
++ 8 TILL 470	Monochromator to ChR2
++ 9 TILL 580	Monochromator to NpHR
+
+
++ 11 COM1 pos=1	FW1 IR+ND20 
++ 12 COM1 pos=2	FW1 ND30    
++ 13 COM1 pos=3	FW1 ND20    
++ 14 COM1 pos=4	FW1 Black   
++ 15 COM1 pos=5	FW1 515/39  
++ 16 COM1 pos=6	FW1 UV_411SP
+
++ 31 COM3 i1	Epi  12% 
++ 32 COM3 i2	Epi  25% 
++ 33 COM3 i3	Epi  50% 
++ 34 COM3 i4	Epi 100%
+
++ 41 COM6 i1	Prj Epi  12% 
++ 42 COM6 i2	Prj Epi  25% 
++ 43 COM6 i3	Prj Epi  50% 
++ 44 COM6 i4	Prj Epi 100%
